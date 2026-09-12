@@ -1,13 +1,40 @@
+from flask import Flask
+from threading import Thread
+import os
 from datetime import datetime, timedelta
 import discord
+from discord.ext import commands
 from discord import Embed
 
-def create_prediction_embed(hispana_data, rival_data, past_days=7, future_days=14):
-    # hispana_data y rival_data pueden ser tuplas o diccionarios con: (nombre, posicion, valor_actual, crecimiento_diario)
-    h_name, h_pos, h_val, h_growth = hispana_data
-    r_name, r_pos, r_val, r_growth = rival_data
+# --- Servidor Flask para UptimeRobot (Mantener 24/7) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot de Proyecciones activo 24/7"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- Configuración del Bot de Discord ---
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+@bot.event
+async def on_ready():
+    print(f"Bot de proyecciones conectado como {bot.user}")
+
+
+# --- Comando de Proyección con Tarjeta Dual ---
+@bot.command(name='compare_predict')
+async def compare_predict(ctx, h_name: str, r_name: str, h_pos: int, r_pos: int, h_val: int, r_val: int, h_growth: float, r_growth: float, past_days: int = 7, future_days: int = 14):
     
-    # Cálculos
     distancia = r_val - h_val
     velocidad_neta = h_growth - r_growth
     
@@ -16,7 +43,6 @@ def create_prediction_embed(hispana_data, rival_data, past_days=7, future_days=1
         color=discord.Color.green()
     )
     
-    # Cabecera de metadatos
     embed.description = f"Past days analyzed: **{past_days}**\nFuture days projected: **{future_days}**"
     
     # Columna Izquierda (Hispana)
@@ -50,5 +76,12 @@ def create_prediction_embed(hispana_data, rival_data, past_days=7, future_days=1
         inline=False
     )
     
-    embed.set_footer(text="⭐ Developed for HISPANA Alliance ⭐")
-    return embed
+    embed.set_footer(text="⭐ Developed by HISPANA Alliance ⭐")
+    
+    await ctx.send(embed=embed)
+
+# Arrancar Flask en segundo plano
+keep_alive()
+
+# Ejecutar el Bot con su token seguro en Render
+bot.run(os.environ['PROJECTION_BOT_TOKEN'])
