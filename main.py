@@ -2,6 +2,7 @@ from flask import Flask
 from threading import Thread
 import os
 from datetime import datetime, timedelta
+from difflib import get_close_matches
 import discord
 from discord.ext import commands
 from discord import Embed
@@ -32,20 +33,28 @@ def cargar_datos_desde_txt(nombre_archivo):
     nombre_actual = None
     for linea in lineas:
         linea = linea.strip()
-        # Si la línea empieza con '$', significa que la línea anterior era el nombre de la alianza
         if linea.startswith('$'):
             try:
-                # Limpiar el valor quitando '$', comas y convirtiéndolo a entero
                 valor_limpio = int(float(linea.replace('$', '').replace(',', '')))
                 if nombre_actual:
                     datos[nombre_actual] = valor_limpio
             except ValueError:
                 pass
         elif linea and not linea.startswith('Flights:') and not linea.startswith('Airlines:') and not linea.startswith('Previsión') and not linea.startswith('Siguiente'):
-            # Guardamos el nombre potencial de la alianza
             nombre_actual = linea
             
     return datos
+
+# --- Función para encontrar el nombre exacto usando aproximación ---
+def buscar_nombre_alianza(nombre_buscado, diccionario_datos):
+    if nombre_buscado in diccionario_datos:
+        return nombre_buscado
+    
+    # Buscar la coincidencia más cercana (cutoff 0.4 permite tolerar errores de escritura o faltas de emojis)
+    coincidencias = get_close_matches(nombre_buscado, diccionario_datos.keys(), n=1, cutoff=0.4)
+    if coincidencias:
+        return coincidencias[0]
+    return None
 
 # --- Configuración del Bot ---
 intents = discord.Intents.default()
@@ -57,10 +66,9 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 async def on_ready():
     print(f"Bot conectado como {bot.user}")
 
-# --- Comando de Proyección Automática leyendo los TXT ---
+# --- Comando de Proyección Automática con Búsqueda Inteligente ---
 @bot.command(name='compare_predict')
 async def compare_predict(ctx, h_name: str, r_name: str, future_days: int = 14):
-    # Cargar datos de los dos archivos de texto
     datos_pasados = cargar_datos_desde_txt('pasados.txt')
     datos_actuales = cargar_datos_desde_txt('actuales.txt')
     
@@ -68,19 +76,24 @@ async def compare_predict(ctx, h_name: str, r_name: str, future_days: int = 14):
         await ctx.send("⚠️ El archivo `actuales.txt` está vacío o no se encuentra en el repositorio.")
         return
         
-    if h_name not in datos_actuales or r_name not in datos_actuales:
-        await ctx.send(f"⚠️ Una de las alianzas ('{h_name}' o '{r_name}') no se encuentra en el archivo `actuales.txt`. Revisa la ortografía.")
+    # Resolver nombres con el sistema de coincidencia aproximada
+    h_key = buscar_nombre_alianza(h_name, datos_actuales)
+    r_key = buscar_nombre_alianza(r_name, datos_actuales)
+    
+    if not h_key or not r_key:
+        missing = []
+        if not h_key: missing.append(h_name)
+        if not r_key: missing.append(r_name)
+        await ctx.send(f"⚠️ No se encontró una coincidencia clara para: `{', '.join(missing)}`. Revisa el texto.")
         return
 
-    # Valores actuales
-    h_val = datos_actuales[h_name]
-    r_val = datos_actuales[r_name]
+    # Usar los nombres reales encontrados
+    h_val = datos_actuales[h_key]
+    r_val = datos_actuales[r_key]
     
-    # Valores pasados (si no están en pasados.txt, asumimos que no crecieron o usamos el actual como base)
-    h_val_pasado = datos_pasados.get(h_name, h_val)
-    r_val_pasado = datos_pasados.get(r_name, r_val)
+    h_val_pasado = datos_pasados.get(h_key, h_val)
+    r_val_pasado = datos_pasados.get(r_key, r_val)
     
-    # Cálculo de crecimiento diario (asumiendo un intervalo de 7 días entre archivos)
     dias_analizados = 7 
     h_growth = round((h_val - h_val_pasado) / dias_analizados, 2)
     r_growth = round((r_val - r_val_pasado) / dias_analizados, 2)
@@ -89,29 +102,26 @@ async def compare_predict(ctx, h_name: str, r_name: str, future_days: int = 14):
     velocidad_neta = h_growth - r_growth
     
     embed = Embed(
-        title=f"Prediction: {h_name} vs {r_name}", 
+        title=f"Prediction: {h_key} vs {r_key}", 
         color=discord.Color.green()
     )
     
     embed.description = f"Period analyzed: **{dias_analizados} days**\nFuture days projected: **{future_days}**"
     
-    # Columna Izquierda (Tu alianza)
     h_projected = h_val + (h_growth * future_days)
     embed.add_field(
-        name=f"{h_name} (Your Alliance)",
+        name=f"{h_key} (Your Alliance)",
         value=f"Current value: **${h_val:,}**\nDaily growth: **+{h_growth}**\nProjected value: **${h_projected:,.1f}**",
         inline=True
     )
     
-    # Columna Derecha (Rival)
     r_projected = r_val + (r_growth * future_days)
     embed.add_field(
-        name=f"{r_name} (Rival)",
+        name=f"{r_key} (Rival)",
         value=f"Current value: **${r_val:,}**\nDaily growth: **+{r_growth}**\nProjected value: **${r_projected:,.1f}**",
         inline=True
     )
     
-    # Resultados de tiempo
     if velocidad_neta > 0:
         dias_necesarios = distancia / velocidad_neta
         fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
