@@ -1,7 +1,6 @@
 from flask import Flask
 from threading import Thread
 import os
-import sqlite3
 from datetime import datetime, timedelta
 import discord
 from discord.ext import commands
@@ -12,7 +11,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot de Proyecciones con Base de Datos activo 24/7"
+    return "Bot de Proyecciones de Alianzas activo 24/7"
 
 def run():
     app.run(host='0.0.0.0', port=8080)
@@ -21,23 +20,32 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- Configuración de la Base de Datos SQLite ---
-def init_db():
-    conn = sqlite3.connect('hispana_data.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            position INTEGER,
-            value INTEGER,
-            date TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_db()
+# --- Función para leer y parsear los archivos de texto ---
+def cargar_datos_desde_txt(nombre_archivo):
+    datos = {}
+    if not os.path.exists(nombre_archivo):
+        return datos
+    
+    with open(nombre_archivo, 'r', encoding='utf-8') as f:
+        lineas = f.readlines()
+        
+    nombre_actual = None
+    for linea in lineas:
+        linea = linea.strip()
+        # Si la línea empieza con '$', significa que la línea anterior era el nombre de la alianza
+        if linea.startswith('$'):
+            try:
+                # Limpiar el valor quitando '$', comas y convirtiéndolo a entero
+                valor_limpio = int(float(linea.replace('$', '').replace(',', '')))
+                if nombre_actual:
+                    datos[nombre_actual] = valor_limpio
+            except ValueError:
+                pass
+        elif linea and not linea.startswith('Flights:') and not linea.startswith('Airlines:') and not linea.startswith('Previsión') and not linea.startswith('Siguiente'):
+            # Guardamos el nombre potencial de la alianza
+            nombre_actual = linea
+            
+    return datos
 
 # --- Configuración del Bot ---
 intents = discord.Intents.default()
@@ -49,96 +57,68 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 async def on_ready():
     print(f"Bot conectado como {bot.user}")
 
-# --- Comando para registrar datos (extraídos de tus fotos) ---
-@bot.command(name='registrar')
-async def registrar(ctx, name: str, position: int, value: int):
-    conn = sqlite3.connect('hispana_data.db')
-    cursor = conn.cursor()
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    
-    cursor.execute("INSERT INTO records (name, position, value, date) VALUES (?, ?, ?, ?)",
-                   (name, position, value, fecha_hoy))
-    conn.commit()
-    conn.close()
-    
-    await ctx.send(f"✅ Registro guardado: **{name}** | Pos: {position} | Puntos: {value} ({fecha_hoy})")
-
-# --- Comando de Proyección Automática usando la Base de Datos ---
+# --- Comando de Proyección Automática leyendo los TXT ---
 @bot.command(name='compare_predict')
 async def compare_predict(ctx, h_name: str, r_name: str, future_days: int = 14):
-    conn = sqlite3.connect('hispana_data.db')
-    cursor = conn.cursor()
+    # Cargar datos de los dos archivos de texto
+    datos_pasados = cargar_datos_desde_txt('pasados.txt')
+    datos_actuales = cargar_datos_desde_txt('actuales.txt')
     
-    def get_latest_and_past(alliance_name):
-        # Obtener el registro más reciente
-        cursor.execute("SELECT position, value, date FROM records WHERE name = ? ORDER BY date DESC LIMIT 1", (alliance_name,))
-        latest = cursor.fetchone()
-        
-        # Obtener un registro de hace ~7 días
-        cursor.execute("SELECT value, date FROM records WHERE name = ? AND date <= date('now', '-6 days') ORDER BY date DESC LIMIT 1", (alliance_name,))
-        past = cursor.fetchone()
-        return latest, past
-
-    h_latest, h_past = get_latest_and_past(h_name)
-    r_latest, r_past = get_latest_and_past(r_name)
-    conn.close()
-    
-    if not h_latest or not r_latest:
-        await ctx.send("⚠️ Faltan datos registrados para una de las alianzas. Usa `!registrar` primero.")
+    if not datos_actuales:
+        await ctx.send("⚠️ El archivo `actuales.txt` está vacío o no se encuentra en el repositorio.")
         return
         
-    h_pos, h_val, h_date = h_latest
-    r_pos, r_val, r_date = r_latest
-    
-    # Calcular crecimiento diario basado en el histórico si existe
-    if h_past:
-        h_diff_days = max(1, (datetime.strptime(h_date, "%Y-%m-%d") - datetime.strptime(h_past[1], "%Y-%m-%d")).days)
-        h_growth = round((h_val - h_past[0]) / h_diff_days, 2)
-        past_days_analyzed = h_diff_days
-    else:
-        h_growth = 0.0
-        past_days_analyzed = 7
+    if h_name not in datos_actuales or r_name not in datos_actuales:
+        await ctx.send(f"⚠️ Una de las alianzas ('{h_name}' o '{r_name}') no se encuentra en el archivo `actuales.txt`. Revisa la ortografía.")
+        return
 
-    if r_past:
-        r_diff_days = max(1, (datetime.strptime(r_date, "%Y-%m-%d") - datetime.strptime(r_past[1], "%Y-%m-%d")).days)
-        r_growth = round((r_val - r_past[0]) / r_diff_days, 2)
-    else:
-        r_growth = 0.0
+    # Valores actuales
+    h_val = datos_actuales[h_name]
+    r_val = datos_actuales[r_name]
+    
+    # Valores pasados (si no están en pasados.txt, asumimos que no crecieron o usamos el actual como base)
+    h_val_pasado = datos_pasados.get(h_name, h_val)
+    r_val_pasado = datos_pasados.get(r_name, r_val)
+    
+    # Cálculo de crecimiento diario (asumiendo un intervalo de 7 días entre archivos)
+    dias_analizados = 7 
+    h_growth = round((h_val - h_val_pasado) / dias_analizados, 2)
+    r_growth = round((r_val - r_val_pasado) / dias_analizados, 2)
 
     distancia = r_val - h_val
     velocidad_neta = h_growth - r_growth
     
     embed = Embed(
-        title=f"Prediction between {h_name} and {r_name}", 
+        title=f"Prediction: {h_name} vs {r_name}", 
         color=discord.Color.green()
     )
     
-    embed.description = f"Past days analyzed: **{past_days_analyzed}**\nFuture days projected: **{future_days}**"
+    embed.description = f"Period analyzed: **{dias_analizados} days**\nFuture days projected: **{future_days}**"
     
-    # Columna Izquierda
+    # Columna Izquierda (Tu alianza)
     h_projected = h_val + (h_growth * future_days)
     embed.add_field(
-        name=f"{h_name} (lower value)",
-        value=f"Position: **{h_pos}**\nCurrent value: **{h_val}**\nDaily growth: **{h_growth}**\nProjected value: **{h_projected:.1f}**",
+        name=f"{h_name} (Your Alliance)",
+        value=f"Current value: **${h_val:,}**\nDaily growth: **+{h_growth}**\nProjected value: **${h_projected:,.1f}**",
         inline=True
     )
     
-    # Columna Derecha
+    # Columna Derecha (Rival)
     r_projected = r_val + (r_growth * future_days)
     embed.add_field(
-        name=f"{r_name} (higher value)",
-        value=f"Position: **{r_pos}**\nCurrent value: **{r_val}**\nDaily growth: **{r_growth}**\nProjected value: **{r_projected:.1f}**",
+        name=f"{r_name} (Rival)",
+        value=f"Current value: **${r_val:,}**\nDaily growth: **+{r_growth}**\nProjected value: **${r_projected:,.1f}**",
         inline=True
     )
     
-    # Resultados
+    # Resultados de tiempo
     if velocidad_neta > 0:
         dias_necesarios = distancia / velocidad_neta
         fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
         fecha_texto = fecha_estimada.strftime("%d %b %Y")
         resultado_texto = f"⏳ Estimated days to overtake: **{dias_necesarios:.1f}**\n📅 Estimated date: **{fecha_texto}**"
     else:
-        resultado_texto = "⚠️ El rival mantiene mayor o igual velocidad de crecimiento."
+        resultado_texto = "⚠️ El rival mantiene mayor o igual velocidad de crecimiento en este periodo."
 
     embed.add_field(
         name="Result",
