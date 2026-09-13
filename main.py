@@ -56,6 +56,24 @@ def buscar_nombre_alianza(nombre_buscado, diccionario_datos):
         return coincidencias[0]
     return None
 
+# --- Función para calcular días transcurridos dinámicamente ---
+def calcular_dias_analizados():
+    # Fecha del reporte base inicial de HISPANIA.
+    fecha_base = datetime(2026, 9, 12)
+    # Fecha actual del reporte.
+    hoy = datetime.now()
+    
+    # Diferencia de días
+    delta_dias = (hoy - fecha_base).days
+    
+    # El primer reporte excepcional fue el 12 de septiembre. El próximo es el 23 (11 días).
+    # Si la diferencia es de 11 días o menos (ej: se ejecuta el 23), usamos la diferencia real.
+    # Para cualquier periodo posterior, asumimos que el ciclo normal es de 14 días (quincenal).
+    if delta_dias <= 11:
+         return max(1, delta_dias) # Evitar división por cero
+    else:
+         return 14
+
 # --- Configuración del Bot ---
 intents = discord.Intents.default()
 intents.message_content = True
@@ -66,9 +84,18 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 async def on_ready():
     print(f"Bot conectado como {bot.user}")
 
-# --- Comando de Proyección Automática con Búsqueda Inteligente ---
+# --- Comando de Proyección Automática con Múltiples Rivales ---
 @bot.command(name='compare_predict')
-async def compare_predict(ctx, h_name: str, r_name: str, future_days: int = 14):
+async def compare_predict(ctx, h_name: str, *r_names):
+    # Límite máximo de 5 rivales a comparar.
+    if len(r_names) > 5:
+        await ctx.send("⚠️ Por favor, ingresa un máximo de 5 alianzas rivales a comparar.")
+        return
+    
+    if len(r_names) == 0:
+        await ctx.send("⚠️ Debes incluir al menos una alianza rival.")
+        return
+
     datos_pasados = cargar_datos_desde_txt('pasados.txt')
     datos_actuales = cargar_datos_desde_txt('actuales.txt')
     
@@ -76,66 +103,90 @@ async def compare_predict(ctx, h_name: str, r_name: str, future_days: int = 14):
         await ctx.send("⚠️ El archivo `actuales.txt` está vacío o no se encuentra en el repositorio.")
         return
         
-    # Resolver nombres con el sistema de coincidencia aproximada
+    # Resolver nombre de tu alianza
     h_key = buscar_nombre_alianza(h_name, datos_actuales)
-    r_key = buscar_nombre_alianza(r_name, datos_actuales)
-    
-    if not h_key or not r_key:
-        missing = []
-        if not h_key: missing.append(h_name)
-        if not r_key: missing.append(r_name)
-        await ctx.send(f"⚠️ No se encontró una coincidencia clara para: `{', '.join(missing)}`. Revisa el texto.")
+    if not h_key:
+        await ctx.send(f"⚠️ No se encontró la alianza base: `{h_name}`.")
         return
+    
+    # Resolver nombres de las alianzas rivales
+    rivales_encontrados = []
+    rivales_faltantes = []
+    
+    for r_name in r_names:
+         r_key = buscar_nombre_alianza(r_name, datos_actuales)
+         if r_key:
+             rivales_encontrados.append(r_key)
+         else:
+             rivales_faltantes.append(r_name)
+    
+    if rivales_faltantes:
+        await ctx.send(f"⚠️ No se encontraron las siguientes alianzas: `{', '.join(rivales_faltantes)}`")
+        if not rivales_encontrados:
+             return
 
-    # Usar los nombres reales encontrados
+    # Cálculo dinámico de días transcurridos
+    dias_analizados = calcular_dias_analizados()
+    future_days = 14 # Proyección estándar a futuro
+
     h_val = datos_actuales[h_key]
-    r_val = datos_actuales[r_key]
-    
     h_val_pasado = datos_pasados.get(h_key, h_val)
-    r_val_pasado = datos_pasados.get(r_key, r_val)
-    
-    dias_analizados = 7 
     h_growth = round((h_val - h_val_pasado) / dias_analizados, 2)
-    r_growth = round((r_val - r_val_pasado) / dias_analizados, 2)
+    h_projected = h_val + (h_growth * future_days)
 
-    distancia = r_val - h_val
-    velocidad_neta = h_growth - r_growth
+    # Lógica de Ranking de Crecimiento Diario Global
+    # Se calcula el crecimiento de todas las alianzas presentes en ambos archivos para saber la posición de HISPANIA
+    crecimientos_globales = []
+    for alianza, val_actual in datos_actuales.items():
+         val_pasado = datos_pasados.get(alianza, val_actual)
+         crecimiento = round((val_actual - val_pasado) / dias_analizados, 2)
+         crecimientos_globales.append((alianza, crecimiento))
+         
+    # Ordenar de mayor a menor crecimiento
+    crecimientos_globales.sort(key=lambda x: x[1], reverse=True)
     
+    # Encontrar la posición (1-based index) de tu alianza
+    hispana_rank = next((i + 1 for i, x in enumerate(crecimientos_globales) if x[0] == h_key), "N/A")
+
     embed = Embed(
-        title=f"Prediction: {h_key} vs {r_key}", 
+        title=f"📊 Proyección: {h_key} vs Rivales", 
         color=discord.Color.green()
     )
     
-    embed.description = f"Period analyzed: **{dias_analizados} days**\nFuture days projected: **{future_days}**"
-    
-    h_projected = h_val + (h_growth * future_days)
-    embed.add_field(
-        name=f"{h_key} (Your Alliance)",
-        value=f"Current value: **${h_val:,}**\nDaily growth: **+{h_growth}**\nProjected value: **${h_projected:,.1f}**",
-        inline=True
+    embed.description = (
+        f"📅 Período analizado: **{dias_analizados} días** | Proyección: **{future_days} días**\n"
+        f"🏆 **Ránking Crecimiento Diario ({h_key}): #{hispana_rank}**"
     )
     
-    r_projected = r_val + (r_growth * future_days)
     embed.add_field(
-        name=f"{r_key} (Rival)",
-        value=f"Current value: **${r_val:,}**\nDaily growth: **+{r_growth}**\nProjected value: **${r_projected:,.1f}**",
-        inline=True
-    )
-    
-    if velocidad_neta > 0:
-        dias_necesarios = distancia / velocidad_neta
-        fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
-        fecha_texto = fecha_estimada.strftime("%d %b %Y")
-        resultado_texto = f"⏳ Estimated days to overtake: **{dias_necesarios:.1f}**\n📅 Estimated date: **{fecha_texto}**"
-    else:
-        resultado_texto = "⚠️ El rival mantiene mayor o igual velocidad de crecimiento en este periodo."
-
-    embed.add_field(
-        name="Result",
-        value=resultado_texto,
+        name=f"🔵 {h_key} (Nuestra Alianza)",
+        value=f"**Valor:** ${h_val:,} | **CD:** +${h_growth:,.0f} | **Proy:** ${h_projected:,.0f}",
         inline=False
     )
     
+    # Añadir rivales al embed en formato compacto
+    for r_key in rivales_encontrados:
+        r_val = datos_actuales[r_key]
+        r_val_pasado = datos_pasados.get(r_key, r_val)
+        r_growth = round((r_val - r_val_pasado) / dias_analizados, 2)
+        r_projected = r_val + (r_growth * future_days)
+        
+        distancia = r_val - h_val
+        velocidad_neta = h_growth - r_growth
+        
+        if velocidad_neta > 0:
+             dias_necesarios = distancia / velocidad_neta
+             fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
+             resultado = f"⏳ Alcanzable en **{dias_necesarios:.1f}** días ({fecha_estimada.strftime('%d %b %Y')})"
+        else:
+             resultado = "⚠️ Rival más rápido o igual."
+             
+        embed.add_field(
+            name=f"🔴 {r_key}",
+            value=f"**Valor:** ${r_val:,} | **CD:** +${r_growth:,.0f} | **Proy:** ${r_projected:,.0f}\n{resultado}",
+            inline=False
+        )
+
     embed.set_footer(text="⭐ Developed by HISPANA Alliance ⭐")
     await ctx.send(embed=embed)
 
