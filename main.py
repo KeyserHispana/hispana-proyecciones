@@ -44,7 +44,6 @@ def cargar_datos_desde_txt(nombre_archivo):
             
         if linea.startswith('$'):
             try:
-                # Mantenemos float para conservar los centavos/decimales exactos del valor de la alianza si los hubiera
                 valor_limpio = float(linea.replace('$', '').replace(',', ''))
                 if nombre_actual:
                     datos[nombre_actual] = valor_limpio
@@ -138,11 +137,18 @@ async def comparar(ctx, h_name: str, *r_names):
 
     dias_analizados = calcular_dias_entre_archivos(fecha_pasada, fecha_actual)
 
+    # 1. Ranking Global por Valor (Posición actual en la tabla general)
+    ranking_global_valor = sorted(datos_actuales.items(), key=lambda x: x[1], reverse=True)
+    
+    def obtener_puesto_global(alianza_key):
+        return next((i + 1 for i, x in enumerate(ranking_global_valor) if x[0] == alianza_key), "N/A")
+
     h_val = datos_actuales[h_key]
     h_val_pasado = datos_pasados.get(h_key, h_val)
-    # Crecimiento diario exacto con todos los decimales en la memoria
     h_growth = (h_val - h_val_pasado) / dias_analizados
+    h_puesto = obtener_puesto_global(h_key)
 
+    # 2. Ranking Global de Crecimiento Diario (CD)
     crecimientos_globales = []
     for alianza, val_actual in datos_actuales.items():
         val_pasado = datos_pasados.get(alianza, val_actual)
@@ -152,6 +158,9 @@ async def comparar(ctx, h_name: str, *r_names):
     crecimientos_globales.sort(key=lambda x: x[1], reverse=True)
     hispana_rank = next((i + 1 for i, x in enumerate(crecimientos_globales) if x[0] == h_key), "N/A")
 
+    def obtener_ranking_cd(alianza_key):
+        return next((i + 1 for i, x in enumerate(crecimientos_globales) if x[0] == alianza_key), "N/A")
+
     embed = Embed(
         title=f"📊 Proyección: {h_key} vs Rivales", 
         color=discord.Color.green()
@@ -159,12 +168,11 @@ async def comparar(ctx, h_name: str, *r_names):
     
     embed.description = (
         f"📅 Período analizado: **{fecha_pasada}** a **{fecha_actual}** ({dias_analizados} días)\n"
-        f"🏆 **Ranking Global de Crecimiento Diario ({h_key}): #{hispana_rank}**"
+        f"🏆 **Ranking Global CD ({h_key}): #{hispana_rank}**"
     )
     
-    # Se muestra el CD con formato de 2 decimales (:,.2f)
     embed.add_field(
-        name=f"🔵 {h_key} (Base)",
+        name=f"🔵 {h_key} (Base) — Puesto #{h_puesto}",
         value=f"**Valor:** ${h_val:,.2f} | **CD:** +${h_growth:,.2f}",
         inline=False
     )
@@ -173,6 +181,9 @@ async def comparar(ctx, h_name: str, *r_names):
         r_val = datos_actuales[r_key]
         r_val_pasado = datos_pasados.get(r_key, r_val)
         r_growth = (r_val - r_val_pasado) / dias_analizados
+        
+        r_puesto = obtener_puesto_global(r_key)
+        r_rank_cd = obtener_ranking_cd(r_key)
         
         distancia = r_val - h_val
         velocidad_neta = h_growth - r_growth
@@ -201,10 +212,9 @@ async def comparar(ctx, h_name: str, *r_names):
             else:
                 resultado = "🤝 Empate total en valor y en crecimiento."
              
-        # Se muestra el CD del rival también con 2 decimales (:,.2f)
         embed.add_field(
-            name=f"🔴 {r_key}",
-            value=f"**Valor:** ${r_val:,.2f} | **CD:** +${r_growth:,.2f}\n{resultado}",
+            name=f"🔴 {r_key} — Puesto #{r_puesto}",
+            value=f"**Valor:** ${r_val:,.2f} | **CD:** +${r_growth:,.2f} (Rank CD: #{r_rank_cd})\n{resultado}",
             inline=False
         )
 
