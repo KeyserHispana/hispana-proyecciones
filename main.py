@@ -81,7 +81,7 @@ def calcular_dias_entre_archivos(fecha_pasada, fecha_actual):
         dias = (f_actual - f_pasada).days
         return max(1, dias)
     except (ValueError, TypeError):
-        return 14
+        return 7 # Fallback ajustado a 7 días para reportes semanales
 
 # --- Configuración del Bot ---
 intents = discord.Intents.default()
