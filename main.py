@@ -96,8 +96,9 @@ async def on_ready():
 # --- Comando de Proyección Automática con Múltiples Rivales ---
 @bot.command(name='comparar')
 async def comparar(ctx, h_name: str, *r_names):
-    if len(r_names) > 5:
-        await ctx.send("⚠️ Por favor, ingresa un máximo de 5 alianzas rivales a comparar.")
+    # Límite ampliado a 8 rivales
+    if len(r_names) > 8:
+        await ctx.send("⚠️ Por favor, ingresa un máximo de 8 alianzas rivales a comparar.")
         return
     
     if len(r_names) == 0:
@@ -174,23 +175,23 @@ async def comparar(ctx, h_name: str, *r_names):
         distancia = r_val - h_val
         velocidad_neta = h_growth - r_growth
         
-        if distancia > 0: # El rival va ganando
-            if velocidad_neta > 0: # Nosotros crecemos más rápido
+        if distancia > 0: 
+            if velocidad_neta > 0: 
                 dias_necesarios = distancia / velocidad_neta
                 fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
                 resultado = f"📈 Los alcanzaremos en **{dias_necesarios:.1f}** días (Aprox. {fecha_estimada.strftime('%Y-%m-%d')})"
             else:
                 resultado = "⚠️ Rival adelante y creciendo más rápido (o igual). Inalcanzable a este ritmo."
         
-        elif distancia < 0: # Nosotros vamos ganando
-            if velocidad_neta < 0: # El rival crece más rápido
+        elif distancia < 0: 
+            if velocidad_neta < 0: 
                 dias_necesarios = abs(distancia) / abs(velocidad_neta)
                 fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
                 resultado = f"🚨 Nos alcanzarán en **{dias_necesarios:.1f}** días (Aprox. {fecha_estimada.strftime('%Y-%m-%d')})"
             else:
                 resultado = "🛡️ Estamos adelante y ampliando (o manteniendo) la ventaja."
         
-        else: # Empate exacto en valor
+        else: 
             if velocidad_neta > 0:
                 resultado = "🚀 Empatados en valor, pero estamos creciendo más rápido."
             elif velocidad_neta < 0:
