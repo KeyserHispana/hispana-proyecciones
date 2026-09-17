@@ -58,12 +58,10 @@ def cargar_datos_desde_txt(nombre_archivo):
 def buscar_nombre_alianza(nombre_buscado, diccionario_datos):
     nombre_buscado_limpio = nombre_buscado.strip().lower()
     
-    # 1. Búsqueda exacta (ignorando mayúsculas/minúsculas)
     for nombre_real in diccionario_datos.keys():
         if nombre_buscado_limpio == nombre_real.lower():
             return nombre_real
             
-    # 2. Búsqueda por aproximación (ignorando mayúsculas/minúsculas)
     nombres_reales = list(diccionario_datos.keys())
     nombres_min = [n.lower() for n in nombres_reales]
     
@@ -138,12 +136,10 @@ async def comparar(ctx, h_name: str, *r_names):
             return
 
     dias_analizados = calcular_dias_entre_archivos(fecha_pasada, fecha_actual)
-    future_days = 14
 
     h_val = datos_actuales[h_key]
     h_val_pasado = datos_pasados.get(h_key, h_val)
     h_growth = round((h_val - h_val_pasado) / dias_analizados, 2)
-    h_projected = h_val + (h_growth * future_days)
 
     crecimientos_globales = []
     for alianza, val_actual in datos_actuales.items():
@@ -160,14 +156,13 @@ async def comparar(ctx, h_name: str, *r_names):
     )
     
     embed.description = (
-        f"📅 Período: **{fecha_pasada}** a **{fecha_actual}** ({dias_analizados} días)\n"
-        f"🎯 Proyección a futuro: **{future_days} días**\n"
+        f"📅 Período analizado: **{fecha_pasada}** a **{fecha_actual}** ({dias_analizados} días)\n"
         f"🏆 **Ranking Global de Crecimiento Diario ({h_key}): #{hispana_rank}**"
     )
     
     embed.add_field(
         name=f"🔵 {h_key} (Base)",
-        value=f"**Valor:** ${h_val:,} | **CD:** +${h_growth:,.0f} | **Proy:** ${h_projected:,.0f}",
+        value=f"**Valor:** ${h_val:,} | **CD:** +${h_growth:,.0f}",
         inline=False
     )
     
@@ -175,21 +170,37 @@ async def comparar(ctx, h_name: str, *r_names):
         r_val = datos_actuales[r_key]
         r_val_pasado = datos_pasados.get(r_key, r_val)
         r_growth = round((r_val - r_val_pasado) / dias_analizados, 2)
-        r_projected = r_val + (r_growth * future_days)
         
         distancia = r_val - h_val
         velocidad_neta = h_growth - r_growth
         
-        if velocidad_neta > 0:
-            dias_necesarios = distancia / velocidad_neta
-            fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
-            resultado = f"⏳ Las pasaremos en **{dias_necesarios:.1f}** días ({fecha_estimada.strftime('%d %b %Y')})"
-        else:
-            resultado = "⚠️ Rival más rápido o igual. No los alcanzaremos a este ritmo."
+        if distancia > 0: # El rival va ganando
+            if velocidad_neta > 0: # Nosotros crecemos más rápido
+                dias_necesarios = distancia / velocidad_neta
+                fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
+                resultado = f"📈 Los alcanzaremos en **{dias_necesarios:.1f}** días (Aprox. {fecha_estimada.strftime('%Y-%m-%d')})"
+            else:
+                resultado = "⚠️ Rival adelante y creciendo más rápido (o igual). Inalcanzable a este ritmo."
+        
+        elif distancia < 0: # Nosotros vamos ganando
+            if velocidad_neta < 0: # El rival crece más rápido
+                dias_necesarios = abs(distancia) / abs(velocidad_neta)
+                fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
+                resultado = f"🚨 Nos alcanzarán en **{dias_necesarios:.1f}** días (Aprox. {fecha_estimada.strftime('%Y-%m-%d')})"
+            else:
+                resultado = "🛡️ Estamos adelante y ampliando (o manteniendo) la ventaja."
+        
+        else: # Empate exacto en valor
+            if velocidad_neta > 0:
+                resultado = "🚀 Empatados en valor, pero estamos creciendo más rápido."
+            elif velocidad_neta < 0:
+                resultado = "⚠️ Empatados en valor, pero el rival está creciendo más rápido."
+            else:
+                resultado = "🤝 Empate total en valor y en crecimiento."
              
         embed.add_field(
             name=f"🔴 {r_key}",
-            value=f"**Valor:** ${r_val:,} | **CD:** +${r_growth:,.0f} | **Proy:** ${r_projected:,.0f}\n{resultado}",
+            value=f"**Valor:** ${r_val:,} | **CD:** +${r_growth:,.0f}\n{resultado}",
             inline=False
         )
 
