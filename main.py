@@ -21,11 +21,13 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- Función para leer y parsear los archivos de texto ---
+# --- Función para leer y parsear los archivos de texto con FECHA ---
 def cargar_datos_desde_txt(nombre_archivo):
     datos = {}
+    fecha_str = None
+    
     if not os.path.exists(nombre_archivo):
-        return datos
+        return fecha_str, datos
     
     with open(nombre_archivo, 'r', encoding='utf-8') as f:
         lineas = f.readlines()
@@ -33,6 +35,14 @@ def cargar_datos_desde_txt(nombre_archivo):
     nombre_actual = None
     for linea in lineas:
         linea = linea.strip()
+        if not linea:
+            continue
+            
+        # Extraer la fecha si está en la línea
+        if linea.lower().startswith('fecha:'):
+            fecha_str = linea.split(':')[1].strip()
+            continue
+            
         if linea.startswith('$'):
             try:
                 valor_limpio = int(float(linea.replace('$', '').replace(',', '')))
@@ -40,39 +50,33 @@ def cargar_datos_desde_txt(nombre_archivo):
                     datos[nombre_actual] = valor_limpio
             except ValueError:
                 pass
-        elif linea and not linea.startswith('Flights:') and not linea.startswith('Airlines:') and not linea.startswith('Previsión') and not linea.startswith('Siguiente'):
+        elif not linea.startswith('Flights:') and not linea.startswith('Airlines:') and not linea.startswith('Previsión') and not linea.startswith('Siguiente'):
             nombre_actual = linea
             
-    return datos
+    return fecha_str, datos
 
 # --- Función para encontrar el nombre exacto usando aproximación ---
 def buscar_nombre_alianza(nombre_buscado, diccionario_datos):
     if nombre_buscado in diccionario_datos:
         return nombre_buscado
     
-    # Buscar la coincidencia más cercana (cutoff 0.4 permite tolerar errores de escritura o faltas de emojis)
+    # Buscar la coincidencia más cercana
     coincidencias = get_close_matches(nombre_buscado, diccionario_datos.keys(), n=1, cutoff=0.4)
     if coincidencias:
         return coincidencias[0]
     return None
 
-# --- Función para calcular días transcurridos dinámicamente ---
-def calcular_dias_analizados():
-    # Fecha del reporte base inicial de HISPANIA.
-    fecha_base = datetime(2026, 9, 12)
-    # Fecha actual del reporte.
-    hoy = datetime.now()
-    
-    # Diferencia de días
-    delta_dias = (hoy - fecha_base).days
-    
-    # El primer reporte excepcional fue el 12 de septiembre. El próximo es el 23 (11 días).
-    # Si la diferencia es de 11 días o menos (ej: se ejecuta el 23), usamos la diferencia real.
-    # Para cualquier periodo posterior, asumimos que el ciclo normal es de 14 días (quincenal).
-    if delta_dias <= 11:
-         return max(1, delta_dias) # Evitar división por cero
-    else:
-         return 14
+# --- Función para calcular días transcurridos usando las fechas de los TXT ---
+def calcular_dias_entre_archivos(fecha_pasada, fecha_actual):
+    formato = "%Y-%m-%d"
+    try:
+        f_pasada = datetime.strptime(fecha_pasada, formato)
+        f_actual = datetime.strptime(fecha_actual, formato)
+        dias = (f_actual - f_pasada).days
+        return max(1, dias) # Evitar división por cero si ponen la misma fecha
+    except (ValueError, TypeError):
+        # Fallback en caso de que escriban mal la fecha
+        return 14
 
 # --- Configuración del Bot ---
 intents = discord.Intents.default()
@@ -85,22 +89,26 @@ async def on_ready():
     print(f"Bot conectado como {bot.user}")
 
 # --- Comando de Proyección Automática con Múltiples Rivales ---
-@bot.command(name='compare_predict')
-async def compare_predict(ctx, h_name: str, *r_names):
+@bot.command(name='comparar')
+async def comparar(ctx, h_name: str, *r_names):
     # Límite máximo de 5 rivales a comparar.
     if len(r_names) > 5:
         await ctx.send("⚠️ Por favor, ingresa un máximo de 5 alianzas rivales a comparar.")
         return
     
     if len(r_names) == 0:
-        await ctx.send("⚠️ Debes incluir al menos una alianza rival.")
+        await ctx.send("⚠️ Debes incluir al menos una alianza rival. Ejemplo: `!comparar Hispana FAME`")
         return
 
-    datos_pasados = cargar_datos_desde_txt('pasados.txt')
-    datos_actuales = cargar_datos_desde_txt('actuales.txt')
+    fecha_pasada, datos_pasados = cargar_datos_desde_txt('pasados.txt')
+    fecha_actual, datos_actuales = cargar_datos_desde_txt('actuales.txt')
     
     if not datos_actuales:
         await ctx.send("⚠️ El archivo `actuales.txt` está vacío o no se encuentra en el repositorio.")
+        return
+        
+    if not fecha_pasada or not fecha_actual:
+        await ctx.send("⚠️ Falta la fecha en los archivos. Asegúrate de que la primera línea diga `Fecha: AAAA-MM-DD`.")
         return
         
     # Resolver nombre de tu alianza
@@ -114,19 +122,19 @@ async def compare_predict(ctx, h_name: str, *r_names):
     rivales_faltantes = []
     
     for r_name in r_names:
-         r_key = buscar_nombre_alianza(r_name, datos_actuales)
-         if r_key:
-             rivales_encontrados.append(r_key)
-         else:
-             rivales_faltantes.append(r_name)
+        r_key = buscar_nombre_alianza(r_name, datos_actuales)
+        if r_key:
+            rivales_encontrados.append(r_key)
+        else:
+            rivales_faltantes.append(r_name)
     
     if rivales_faltantes:
         await ctx.send(f"⚠️ No se encontraron las siguientes alianzas: `{', '.join(rivales_faltantes)}`")
         if not rivales_encontrados:
-             return
+            return
 
-    # Cálculo dinámico de días transcurridos
-    dias_analizados = calcular_dias_analizados()
+    # Cálculo exacto de días transcurridos
+    dias_analizados = calcular_dias_entre_archivos(fecha_pasada, fecha_actual)
     future_days = 14 # Proyección estándar a futuro
 
     h_val = datos_actuales[h_key]
@@ -135,17 +143,13 @@ async def compare_predict(ctx, h_name: str, *r_names):
     h_projected = h_val + (h_growth * future_days)
 
     # Lógica de Ranking de Crecimiento Diario Global
-    # Se calcula el crecimiento de todas las alianzas presentes en ambos archivos para saber la posición de HISPANIA
     crecimientos_globales = []
     for alianza, val_actual in datos_actuales.items():
-         val_pasado = datos_pasados.get(alianza, val_actual)
-         crecimiento = round((val_actual - val_pasado) / dias_analizados, 2)
-         crecimientos_globales.append((alianza, crecimiento))
+        val_pasado = datos_pasados.get(alianza, val_actual)
+        crecimiento = round((val_actual - val_pasado) / dias_analizados, 2)
+        crecimientos_globales.append((alianza, crecimiento))
          
-    # Ordenar de mayor a menor crecimiento
     crecimientos_globales.sort(key=lambda x: x[1], reverse=True)
-    
-    # Encontrar la posición (1-based index) de tu alianza
     hispana_rank = next((i + 1 for i, x in enumerate(crecimientos_globales) if x[0] == h_key), "N/A")
 
     embed = Embed(
@@ -154,12 +158,13 @@ async def compare_predict(ctx, h_name: str, *r_names):
     )
     
     embed.description = (
-        f"📅 Período analizado: **{dias_analizados} días** | Proyección: **{future_days} días**\n"
-        f"🏆 **Ránking Crecimiento Diario ({h_key}): #{hispana_rank}**"
+        f"📅 Período: **{fecha_pasada}** a **{fecha_actual}** ({dias_analizados} días)\n"
+        f"🎯 Proyección a futuro: **{future_days} días**\n"
+        f"🏆 **Ranking Global de Crecimiento Diario ({h_key}): #{hispana_rank}**"
     )
     
     embed.add_field(
-        name=f"🔵 {h_key} (Nuestra Alianza)",
+        name=f"🔵 {h_key} (Base)",
         value=f"**Valor:** ${h_val:,} | **CD:** +${h_growth:,.0f} | **Proy:** ${h_projected:,.0f}",
         inline=False
     )
@@ -175,11 +180,11 @@ async def compare_predict(ctx, h_name: str, *r_names):
         velocidad_neta = h_growth - r_growth
         
         if velocidad_neta > 0:
-             dias_necesarios = distancia / velocidad_neta
-             fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
-             resultado = f"⏳ Alcanzable en **{dias_necesarios:.1f}** días ({fecha_estimada.strftime('%d %b %Y')})"
+            dias_necesarios = distancia / velocidad_neta
+            fecha_estimada = datetime.now() + timedelta(days=dias_necesarios)
+            resultado = f"⏳ Las pasaremos en **{dias_necesarios:.1f}** días ({fecha_estimada.strftime('%d %b %Y')})"
         else:
-             resultado = "⚠️ Rival más rápido o igual."
+            resultado = "⚠️ Rival más rápido o igual. No los alcanzaremos a este ritmo."
              
         embed.add_field(
             name=f"🔴 {r_key}",
