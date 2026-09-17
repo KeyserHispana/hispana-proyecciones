@@ -44,7 +44,8 @@ def cargar_datos_desde_txt(nombre_archivo):
             
         if linea.startswith('$'):
             try:
-                valor_limpio = int(float(linea.replace('$', '').replace(',', '')))
+                # Mantenemos float para conservar los centavos/decimales exactos del valor de la alianza si los hubiera
+                valor_limpio = float(linea.replace('$', '').replace(',', ''))
                 if nombre_actual:
                     datos[nombre_actual] = valor_limpio
             except ValueError:
@@ -81,7 +82,7 @@ def calcular_dias_entre_archivos(fecha_pasada, fecha_actual):
         dias = (f_actual - f_pasada).days
         return max(1, dias)
     except (ValueError, TypeError):
-        return 7 # Fallback ajustado a 7 días para reportes semanales
+        return 7
 
 # --- Configuración del Bot ---
 intents = discord.Intents.default()
@@ -96,7 +97,6 @@ async def on_ready():
 # --- Comando de Proyección Automática con Múltiples Rivales ---
 @bot.command(name='comparar')
 async def comparar(ctx, h_name: str, *r_names):
-    # Límite ampliado a 8 rivales
     if len(r_names) > 8:
         await ctx.send("⚠️ Por favor, ingresa un máximo de 8 alianzas rivales a comparar.")
         return
@@ -140,12 +140,13 @@ async def comparar(ctx, h_name: str, *r_names):
 
     h_val = datos_actuales[h_key]
     h_val_pasado = datos_pasados.get(h_key, h_val)
-    h_growth = round((h_val - h_val_pasado) / dias_analizados, 2)
+    # Crecimiento diario exacto con todos los decimales en la memoria
+    h_growth = (h_val - h_val_pasado) / dias_analizados
 
     crecimientos_globales = []
     for alianza, val_actual in datos_actuales.items():
         val_pasado = datos_pasados.get(alianza, val_actual)
-        crecimiento = round((val_actual - val_pasado) / dias_analizados, 2)
+        crecimiento = (val_actual - val_pasado) / dias_analizados
         crecimientos_globales.append((alianza, crecimiento))
          
     crecimientos_globales.sort(key=lambda x: x[1], reverse=True)
@@ -161,16 +162,17 @@ async def comparar(ctx, h_name: str, *r_names):
         f"🏆 **Ranking Global de Crecimiento Diario ({h_key}): #{hispana_rank}**"
     )
     
+    # Se muestra el CD con formato de 2 decimales (:,.2f)
     embed.add_field(
         name=f"🔵 {h_key} (Base)",
-        value=f"**Valor:** ${h_val:,} | **CD:** +${h_growth:,.0f}",
+        value=f"**Valor:** ${h_val:,.2f} | **CD:** +${h_growth:,.2f}",
         inline=False
     )
     
     for r_key in rivales_encontrados:
         r_val = datos_actuales[r_key]
         r_val_pasado = datos_pasados.get(r_key, r_val)
-        r_growth = round((r_val - r_val_pasado) / dias_analizados, 2)
+        r_growth = (r_val - r_val_pasado) / dias_analizados
         
         distancia = r_val - h_val
         velocidad_neta = h_growth - r_growth
@@ -199,9 +201,10 @@ async def comparar(ctx, h_name: str, *r_names):
             else:
                 resultado = "🤝 Empate total en valor y en crecimiento."
              
+        # Se muestra el CD del rival también con 2 decimales (:,.2f)
         embed.add_field(
             name=f"🔴 {r_key}",
-            value=f"**Valor:** ${r_val:,} | **CD:** +${r_growth:,.0f}\n{resultado}",
+            value=f"**Valor:** ${r_val:,.2f} | **CD:** +${r_growth:,.2f}\n{resultado}",
             inline=False
         )
 
