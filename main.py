@@ -38,7 +38,6 @@ def cargar_datos_desde_txt(nombre_archivo):
         if not linea:
             continue
             
-        # Extraer la fecha si está en la línea
         if linea.lower().startswith('fecha:'):
             fecha_str = linea.split(':')[1].strip()
             continue
@@ -55,15 +54,24 @@ def cargar_datos_desde_txt(nombre_archivo):
             
     return fecha_str, datos
 
-# --- Función para encontrar el nombre exacto usando aproximación ---
+# --- Función para encontrar el nombre exacto INCLUSO CON MAYÚSCULAS/MINÚSCULAS ---
 def buscar_nombre_alianza(nombre_buscado, diccionario_datos):
-    if nombre_buscado in diccionario_datos:
-        return nombre_buscado
+    nombre_buscado_limpio = nombre_buscado.strip().lower()
     
-    # Buscar la coincidencia más cercana
-    coincidencias = get_close_matches(nombre_buscado, diccionario_datos.keys(), n=1, cutoff=0.4)
+    # 1. Búsqueda exacta (ignorando mayúsculas/minúsculas)
+    for nombre_real in diccionario_datos.keys():
+        if nombre_buscado_limpio == nombre_real.lower():
+            return nombre_real
+            
+    # 2. Búsqueda por aproximación (ignorando mayúsculas/minúsculas)
+    nombres_reales = list(diccionario_datos.keys())
+    nombres_min = [n.lower() for n in nombres_reales]
+    
+    coincidencias = get_close_matches(nombre_buscado_limpio, nombres_min, n=1, cutoff=0.4)
     if coincidencias:
-        return coincidencias[0]
+        idx = nombres_min.index(coincidencias[0])
+        return nombres_reales[idx]
+        
     return None
 
 # --- Función para calcular días transcurridos usando las fechas de los TXT ---
@@ -73,9 +81,8 @@ def calcular_dias_entre_archivos(fecha_pasada, fecha_actual):
         f_pasada = datetime.strptime(fecha_pasada, formato)
         f_actual = datetime.strptime(fecha_actual, formato)
         dias = (f_actual - f_pasada).days
-        return max(1, dias) # Evitar división por cero si ponen la misma fecha
+        return max(1, dias)
     except (ValueError, TypeError):
-        # Fallback en caso de que escriban mal la fecha
         return 14
 
 # --- Configuración del Bot ---
@@ -91,7 +98,6 @@ async def on_ready():
 # --- Comando de Proyección Automática con Múltiples Rivales ---
 @bot.command(name='comparar')
 async def comparar(ctx, h_name: str, *r_names):
-    # Límite máximo de 5 rivales a comparar.
     if len(r_names) > 5:
         await ctx.send("⚠️ Por favor, ingresa un máximo de 5 alianzas rivales a comparar.")
         return
@@ -111,13 +117,11 @@ async def comparar(ctx, h_name: str, *r_names):
         await ctx.send("⚠️ Falta la fecha en los archivos. Asegúrate de que la primera línea diga `Fecha: AAAA-MM-DD`.")
         return
         
-    # Resolver nombre de tu alianza
     h_key = buscar_nombre_alianza(h_name, datos_actuales)
     if not h_key:
         await ctx.send(f"⚠️ No se encontró la alianza base: `{h_name}`.")
         return
     
-    # Resolver nombres de las alianzas rivales
     rivales_encontrados = []
     rivales_faltantes = []
     
@@ -133,16 +137,14 @@ async def comparar(ctx, h_name: str, *r_names):
         if not rivales_encontrados:
             return
 
-    # Cálculo exacto de días transcurridos
     dias_analizados = calcular_dias_entre_archivos(fecha_pasada, fecha_actual)
-    future_days = 14 # Proyección estándar a futuro
+    future_days = 14
 
     h_val = datos_actuales[h_key]
     h_val_pasado = datos_pasados.get(h_key, h_val)
     h_growth = round((h_val - h_val_pasado) / dias_analizados, 2)
     h_projected = h_val + (h_growth * future_days)
 
-    # Lógica de Ranking de Crecimiento Diario Global
     crecimientos_globales = []
     for alianza, val_actual in datos_actuales.items():
         val_pasado = datos_pasados.get(alianza, val_actual)
@@ -169,7 +171,6 @@ async def comparar(ctx, h_name: str, *r_names):
         inline=False
     )
     
-    # Añadir rivales al embed en formato compacto
     for r_key in rivales_encontrados:
         r_val = datos_actuales[r_key]
         r_val_pasado = datos_pasados.get(r_key, r_val)
